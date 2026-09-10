@@ -1,0 +1,37 @@
+import os
+from typing import List, Union
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    APP_ENV: str = "development"
+    DEBUG: bool = True
+    PORT: int = 8000
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ]
+
+    # AWS Credentials & Bucket
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "us-east-1"
+    AWS_S3_BUCKET_NAME: str = "inrisk-weather-data-bucket"
+
+    # Storage provider: 's3' or 'local'
+    STORAGE_PROVIDER: str = "s3"
+
+    # Open-Meteo API
+    OPEN_METEO_BASE_URL: str = "https://archive-api.open-meteo.com/v1/archive"
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
+settings = Settings()
