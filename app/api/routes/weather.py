@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
 from app.schemas.weather import (
@@ -57,12 +57,20 @@ async def store_weather_data(payload: StoreWeatherDataRequest):
     response_model=ListWeatherFilesResponse,
     status_code=status.HTTP_200_OK,
 )
-async def list_weather_files():
+async def list_weather_files(
+    limit: int = Query(default=50, ge=1, le=500, description="Maximum number of files to return"),
+    offset: int = Query(default=0, ge=0, description="Offset index for pagination"),
+):
     """
-    Lists stored weather JSON objects from the cloud object storage bucket.
+    Lists stored weather JSON objects from the cloud object storage bucket with limit and offset pagination.
     """
-    files_list = storage_service.list_weather_files()
-    return ListWeatherFilesResponse(files=files_list)
+    files_list, total_count = storage_service.list_weather_files(limit=limit, offset=offset)
+    return ListWeatherFilesResponse(
+        files=files_list,
+        total=total_count,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(

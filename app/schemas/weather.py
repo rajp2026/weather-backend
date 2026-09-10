@@ -55,6 +55,9 @@ class WeatherFileInfo(BaseModel):
 
 class ListWeatherFilesResponse(BaseModel):
     files: List[WeatherFileInfo]
+    total: int = Field(..., description="Total count of weather files in bucket")
+    limit: int = Field(..., description="Applied pagination limit")
+    offset: int = Field(..., description="Applied pagination offset")
 
 
 class ErrorResponse(BaseModel):

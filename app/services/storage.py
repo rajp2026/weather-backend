@@ -90,7 +90,6 @@ class StorageService:
         """
         json_bytes = json.dumps(data, indent=2).encode("utf-8")
 
-        # Always re-check storage connection if previously unconfigured
         if not self.s3_client:
             self.init_storage()
 
@@ -115,30 +114,36 @@ class StorageService:
         logger.info(f"Stored {filename} to local storage fallback at {file_path}")
         return filename
 
-    def list_weather_files(self) -> List[Dict[str, Any]]:
+    def list_weather_files(self, limit: int = 50, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
         """
-        Lists stored weather files in AWS S3 or local directory.
-        Returns list of dicts: [{"name": str, "size": int, "created_at": ISO8601 str}]
+        Lists stored weather files in AWS S3 or local directory with pagination support.
+        Returns Tuple: (paginated_files_list, total_file_count)
         """
-        files = []
+        all_files = []
 
         if not self.s3_client:
             self.init_storage()
 
         if self.s3_client:
             try:
-                response = self.s3_client.list_objects_v2(Bucket=self.bucket_name)
-                contents = response.get("Contents", [])
-                for obj in contents:
-                    key = obj["Key"]
-                    if key.endswith(".json"):
-                        files.append({
-                            "name": key,
-                            "size": obj["Size"],
-                            "created_at": obj["LastModified"].isoformat(),
-                        })
-                files.sort(key=lambda x: x["created_at"], reverse=True)
-                return files
+                # Efficient AWS S3 object listing
+                paginator = self.s3_client.get_paginator('list_objects_v2')
+                page_iterator = paginator.paginate(Bucket=self.bucket_name)
+                
+                for page in page_iterator:
+                    for obj in page.get("Contents", []):
+                        key = obj["Key"]
+                        if key.endswith(".json"):
+                            all_files.append({
+                                "name": key,
+                                "size": obj["Size"],
+                                "created_at": obj["LastModified"].isoformat(),
+                            })
+                # Sort newest first
+                all_files.sort(key=lambda x: x["created_at"], reverse=True)
+                total = len(all_files)
+                paginated_files = all_files[offset : offset + limit]
+                return paginated_files, total
             except (BotoCoreError, ClientError) as e:
                 logger.error(f"S3 list objects error: {e}. Listing from local storage fallback.")
 
@@ -146,14 +151,16 @@ class StorageService:
         for file_path in self.local_dir.glob("*.json"):
             stat = file_path.stat()
             created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
-            files.append({
+            all_files.append({
                 "name": file_path.name,
                 "size": stat.st_size,
                 "created_at": created_at,
             })
         
-        files.sort(key=lambda x: x["created_at"], reverse=True)
-        return files
+        all_files.sort(key=lambda x: x["created_at"], reverse=True)
+        total = len(all_files)
+        paginated_files = all_files[offset : offset + limit]
+        return paginated_files, total
 
     def get_weather_file_content(self, filename: str) -> Optional[dict]:
         """

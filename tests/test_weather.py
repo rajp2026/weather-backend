@@ -62,9 +62,14 @@ def test_get_non_existent_file():
     assert data["message"] == "not found"
 
 
-def test_list_weather_files():
-    response = client.get("/list-weather-files")
+def test_list_weather_files_with_pagination():
+    response = client.get("/list-weather-files?limit=10&offset=0")
     assert response.status_code == 200
     data = response.json()
     assert "files" in data
+    assert "total" in data
+    assert "limit" in data
+    assert "offset" in data
+    assert data["limit"] == 10
+    assert data["offset"] == 0
     assert isinstance(data["files"], list)
