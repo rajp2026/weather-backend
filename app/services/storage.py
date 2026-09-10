@@ -20,7 +20,13 @@ class StorageService:
 
     def __init__(self):
         self.local_dir = Path("local_storage")
-        self.local_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.local_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Use writable /tmp directory in serverless environments (e.g. Vercel / AWS Lambda)
+            self.local_dir = Path("/tmp/local_storage")
+            self.local_dir.mkdir(parents=True, exist_ok=True)
+
         self.s3_client = None
         self.s3_init_error = None
         self.bucket_name = ""

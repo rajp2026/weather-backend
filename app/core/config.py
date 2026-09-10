@@ -12,10 +12,11 @@ load_dotenv()  # Fallback to current working directory .env
 
 
 class Settings(BaseSettings):
-    APP_ENV: str = "development"
-    DEBUG: bool = True
+    APP_ENV: str = "production"
+    DEBUG: bool = False
     PORT: int = 8000
     CORS_ORIGINS: List[str] = [
+        "https://weather-frontend-topaz-ten.vercel.app",
         "http://localhost:5173",
         "http://localhost:3000",
         "http://127.0.0.1:5173",
@@ -25,8 +26,8 @@ class Settings(BaseSettings):
     # AWS Credentials & Bucket
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
-    AWS_REGION: str = "us-east-1"
-    AWS_S3_BUCKET_NAME: str = "inrisk-weather-data-bucket"
+    AWS_REGION: str = "ap-south-1"
+    AWS_S3_BUCKET_NAME: str = "inrisk-weather-data-raj"
 
     # Storage provider: 's3' or 'local'
     STORAGE_PROVIDER: str = "s3"
