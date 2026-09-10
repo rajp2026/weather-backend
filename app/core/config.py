@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     PORT: int = 8000
     CORS_ORIGINS: List[str] = [
+        "https://weather-frontend-rcct.onrender.com",
         "https://weather-frontend-topaz-ten.vercel.app",
         "http://localhost:5173",
         "http://localhost:3000",
