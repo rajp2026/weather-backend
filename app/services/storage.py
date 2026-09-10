@@ -15,33 +15,64 @@ logger = logging.getLogger(__name__)
 class StorageService:
     """
     AWS S3 Cloud Storage Service with transparent local fallback
-    when S3 bucket is unconfigured or credentials are absent.
+    when S3 bucket is unconfigured or credentials are absent/invalid.
     """
 
     def __init__(self):
+        self.local_dir = Path("local_storage")
+        self.local_dir.mkdir(parents=True, exist_ok=True)
+        self.s3_client = None
+        self.s3_init_error = None
+        self.bucket_name = ""
+        self.region = ""
+        self.provider = ""
+        
+        self.init_storage()
+
+    def init_storage(self):
+        """Initializes or re-initializes S3 storage connection."""
         self.bucket_name = settings.AWS_S3_BUCKET_NAME
         self.region = settings.AWS_REGION
         self.provider = settings.STORAGE_PROVIDER.lower()
         self.s3_client = None
-        self.local_dir = Path("local_storage")
+        self.s3_init_error = None
 
-        if self.provider == "s3" and settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
+        key_id = settings.AWS_ACCESS_KEY_ID.strip()
+        secret_key = settings.AWS_SECRET_ACCESS_KEY.strip()
+
+        if self.provider == "s3" and key_id and secret_key:
             try:
-                self.s3_client = boto3.client(
+                client = boto3.client(
                     "s3",
-                    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                    aws_access_key_id=key_id,
+                    aws_secret_access_key=secret_key,
                     region_name=self.region,
                 )
-                logger.info(f"Initialized AWS S3 storage client for bucket '{self.bucket_name}'")
+                # Verify bucket connectivity & permissions via head_bucket
+                client.head_bucket(Bucket=self.bucket_name)
+                self.s3_client = client
+                logger.info(f"Successfully connected to AWS S3 bucket '{self.bucket_name}' in region '{self.region}'")
+            except ClientError as e:
+                err_code = e.response.get("Error", {}).get("Code", str(e))
+                err_msg = e.response.get("Error", {}).get("Message", str(e))
+                self.s3_init_error = f"AWS S3 Error ({err_code}): {err_msg}"
+                logger.error(f"S3 Connection Failed: {self.s3_init_error}")
+                self.s3_client = None
             except Exception as e:
-                logger.warning(f"Failed to initialize S3 client: {e}. Falling back to local storage.")
+                self.s3_init_error = f"Initialization Error: {str(e)}"
+                logger.error(f"S3 Client Exception: {self.s3_init_error}")
                 self.s3_client = None
         else:
-            logger.info("AWS credentials not provided or STORAGE_PROVIDER != 's3'. Using local storage fallback.")
-
-        # Ensure local fallback directory exists
-        self.local_dir.mkdir(parents=True, exist_ok=True)
+            missing_reason = []
+            if not key_id:
+                missing_reason.append("AWS_ACCESS_KEY_ID is missing")
+            if not secret_key:
+                missing_reason.append("AWS_SECRET_ACCESS_KEY is missing")
+            if self.provider != "s3":
+                missing_reason.append(f"STORAGE_PROVIDER is set to '{self.provider}'")
+            
+            self.s3_init_error = ", ".join(missing_reason)
+            logger.info(f"S3 not enabled ({self.s3_init_error}). Using local storage fallback.")
 
     def generate_filename(self, lat: float, lon: float, start_date: str, end_date: str) -> str:
         """
@@ -49,7 +80,6 @@ class StorageService:
         weather_<lat>_<lon>_<start>_<end>_<timestamp>.json
         """
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        # Format lat/lon cleanly (replace minus signs with 'neg' or keep standard)
         lat_str = f"{lat:.2f}"
         lon_str = f"{lon:.2f}"
         return f"weather_{lat_str}_{lon_str}_{start_date}_{end_date}_{timestamp}.json"
@@ -59,7 +89,11 @@ class StorageService:
         Stores the raw JSON dictionary into AWS S3 (or local fallback).
         """
         json_bytes = json.dumps(data, indent=2).encode("utf-8")
-        
+
+        # Always re-check storage connection if previously unconfigured
+        if not self.s3_client:
+            self.init_storage()
+
         if self.s3_client:
             try:
                 self.s3_client.put_object(
@@ -72,6 +106,7 @@ class StorageService:
                 return filename
             except (BotoCoreError, ClientError) as e:
                 logger.error(f"S3 upload error: {e}. Saving to local storage fallback.")
+                self.s3_init_error = f"Upload error: {str(e)}"
 
         # Local fallback execution
         file_path = self.local_dir / filename
@@ -87,6 +122,9 @@ class StorageService:
         """
         files = []
 
+        if not self.s3_client:
+            self.init_storage()
+
         if self.s3_client:
             try:
                 response = self.s3_client.list_objects_v2(Bucket=self.bucket_name)
@@ -99,7 +137,6 @@ class StorageService:
                             "size": obj["Size"],
                             "created_at": obj["LastModified"].isoformat(),
                         })
-                # Sort newest first
                 files.sort(key=lambda x: x["created_at"], reverse=True)
                 return files
             except (BotoCoreError, ClientError) as e:
@@ -123,8 +160,10 @@ class StorageService:
         Fetches raw weather JSON content from AWS S3 or local storage fallback.
         Returns dict or None if file not found.
         """
-        # Sanitize filename to prevent path traversal
         clean_filename = os.path.basename(filename)
+
+        if not self.s3_client:
+            self.init_storage()
 
         if self.s3_client:
             try:

@@ -1,7 +1,14 @@
 import os
+from pathlib import Path
 from typing import List, Union
+from dotenv import load_dotenv
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Explicitly load .env file from root backend folder
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
+load_dotenv()  # Fallback to current working directory .env
 
 
 class Settings(BaseSettings):
