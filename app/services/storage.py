@@ -22,10 +22,13 @@ class StorageService:
         self.local_dir = Path("local_storage")
         try:
             self.local_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:
+        except Exception:
             # Use writable /tmp directory in serverless environments (e.g. Vercel / AWS Lambda)
-            self.local_dir = Path("/tmp/local_storage")
-            self.local_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                self.local_dir = Path("/tmp/local_storage")
+                self.local_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
 
         self.s3_client = None
         self.s3_init_error = None
@@ -33,52 +36,60 @@ class StorageService:
         self.region = ""
         self.provider = ""
         
-        self.init_storage()
+        try:
+            self.init_storage()
+        except Exception as exc:
+            self.s3_init_error = f"Module Init Error: {str(exc)}"
+            self.s3_client = None
 
     def init_storage(self):
         """Initializes or re-initializes S3 storage connection."""
-        self.bucket_name = settings.AWS_S3_BUCKET_NAME
-        self.region = settings.AWS_REGION
-        self.provider = settings.STORAGE_PROVIDER.lower()
-        self.s3_client = None
-        self.s3_init_error = None
+        try:
+            self.bucket_name = getattr(settings, "AWS_S3_BUCKET_NAME", "inrisk-weather-data-raj")
+            self.region = getattr(settings, "AWS_REGION", "ap-south-1")
+            self.provider = str(getattr(settings, "STORAGE_PROVIDER", "s3")).lower()
+            self.s3_client = None
+            self.s3_init_error = None
 
-        key_id = settings.AWS_ACCESS_KEY_ID.strip()
-        secret_key = settings.AWS_SECRET_ACCESS_KEY.strip()
+            key_id = str(getattr(settings, "AWS_ACCESS_KEY_ID", "") or "").strip()
+            secret_key = str(getattr(settings, "AWS_SECRET_ACCESS_KEY", "") or "").strip()
 
-        if self.provider == "s3" and key_id and secret_key:
-            try:
-                client = boto3.client(
-                    "s3",
-                    aws_access_key_id=key_id,
-                    aws_secret_access_key=secret_key,
-                    region_name=self.region,
-                )
-                # Verify bucket connectivity & permissions via head_bucket
-                client.head_bucket(Bucket=self.bucket_name)
-                self.s3_client = client
-                logger.info(f"Successfully connected to AWS S3 bucket '{self.bucket_name}' in region '{self.region}'")
-            except ClientError as e:
-                err_code = e.response.get("Error", {}).get("Code", str(e))
-                err_msg = e.response.get("Error", {}).get("Message", str(e))
-                self.s3_init_error = f"AWS S3 Error ({err_code}): {err_msg}"
-                logger.error(f"S3 Connection Failed: {self.s3_init_error}")
-                self.s3_client = None
-            except Exception as e:
-                self.s3_init_error = f"Initialization Error: {str(e)}"
-                logger.error(f"S3 Client Exception: {self.s3_init_error}")
-                self.s3_client = None
-        else:
-            missing_reason = []
-            if not key_id:
-                missing_reason.append("AWS_ACCESS_KEY_ID is missing")
-            if not secret_key:
-                missing_reason.append("AWS_SECRET_ACCESS_KEY is missing")
-            if self.provider != "s3":
-                missing_reason.append(f"STORAGE_PROVIDER is set to '{self.provider}'")
-            
-            self.s3_init_error = ", ".join(missing_reason)
-            logger.info(f"S3 not enabled ({self.s3_init_error}). Using local storage fallback.")
+            if self.provider == "s3" and key_id and secret_key:
+                try:
+                    client = boto3.client(
+                        "s3",
+                        aws_access_key_id=key_id,
+                        aws_secret_access_key=secret_key,
+                        region_name=self.region,
+                    )
+                    # Verify bucket connectivity & permissions via head_bucket
+                    client.head_bucket(Bucket=self.bucket_name)
+                    self.s3_client = client
+                    logger.info(f"Successfully connected to AWS S3 bucket '{self.bucket_name}' in region '{self.region}'")
+                except ClientError as e:
+                    err_code = e.response.get("Error", {}).get("Code", str(e))
+                    err_msg = e.response.get("Error", {}).get("Message", str(e))
+                    self.s3_init_error = f"AWS S3 Error ({err_code}): {err_msg}"
+                    logger.error(f"S3 Connection Failed: {self.s3_init_error}")
+                    self.s3_client = None
+                except Exception as e:
+                    self.s3_init_error = f"Initialization Error: {str(e)}"
+                    logger.error(f"S3 Client Exception: {self.s3_init_error}")
+                    self.s3_client = None
+            else:
+                missing_reason = []
+                if not key_id:
+                    missing_reason.append("AWS_ACCESS_KEY_ID is missing")
+                if not secret_key:
+                    missing_reason.append("AWS_SECRET_ACCESS_KEY is missing")
+                if self.provider != "s3":
+                    missing_reason.append(f"STORAGE_PROVIDER is set to '{self.provider}'")
+                
+                self.s3_init_error = ", ".join(missing_reason)
+                logger.info(f"S3 not enabled ({self.s3_init_error}). Using local storage fallback.")
+        except Exception as main_e:
+            self.s3_init_error = f"Storage init error: {str(main_e)}"
+            self.s3_client = None
 
     def generate_filename(self, lat: float, lon: float, start_date: str, end_date: str) -> str:
         """
@@ -119,7 +130,7 @@ class StorageService:
                 )
                 logger.info(f"Successfully uploaded {filename} to AWS S3 bucket {self.bucket_name}")
                 return filename
-            except (BotoCoreError, ClientError) as e:
+            except Exception as e:
                 logger.error(f"S3 upload error: {e}. Saving to local storage fallback.")
                 self.s3_init_error = f"Upload error: {str(e)}"
 
@@ -160,20 +171,23 @@ class StorageService:
                                 "size": obj["Size"],
                                 "created_at": obj["LastModified"].isoformat(),
                             })
-            except (BotoCoreError, ClientError) as e:
+            except Exception as e:
                 logger.error(f"S3 list objects error: {e}. Listing from local storage fallback.")
                 all_files = []
 
         # Local fallback listing if S3 is inactive or empty fallback
         if not self.s3_client:
-            for file_path in self.local_dir.glob("*.json"):
-                stat = file_path.stat()
-                created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
-                all_files.append({
-                    "name": file_path.name,
-                    "size": stat.st_size,
-                    "created_at": created_at,
-                })
+            try:
+                for file_path in self.local_dir.glob("*.json"):
+                    stat = file_path.stat()
+                    created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+                    all_files.append({
+                        "name": file_path.name,
+                        "size": stat.st_size,
+                        "created_at": created_at,
+                    })
+            except Exception:
+                pass
         
         all_files.sort(key=lambda x: x["created_at"], reverse=True)
 
@@ -211,7 +225,7 @@ class StorageService:
                 body_str = response["Body"].read().decode("utf-8")
                 return json.loads(body_str)
             except ClientError as e:
-                if e.response["Error"]["Code"] == "NoSuchKey":
+                if e.response.get("Error", {}).get("Code") == "NoSuchKey":
                     logger.warning(f"File {clean_filename} not found in AWS S3 bucket.")
                     return None
                 logger.error(f"S3 get_object error: {e}")
