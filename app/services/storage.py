@@ -84,6 +84,16 @@ class StorageService:
         lon_str = f"{lon:.2f}"
         return f"weather_{lat_str}_{lon_str}_{start_date}_{end_date}_{timestamp}.json"
 
+    def _parse_dates_from_filename(self, filename: str) -> Tuple[Optional[str], Optional[str]]:
+        """Parses start_date and end_date embedded in filename format weather_<lat>_<lon>_<start>_<end>_<timestamp>.json"""
+        try:
+            parts = filename.replace(".json", "").split("_")
+            if len(parts) >= 5 and parts[0] == "weather":
+                return parts[3], parts[4]
+        except Exception:
+            pass
+        return None, None
+
     def store_weather_json(self, filename: str, data: dict) -> str:
         """
         Stores the raw JSON dictionary into AWS S3 (or local fallback).
@@ -114,9 +124,15 @@ class StorageService:
         logger.info(f"Stored {filename} to local storage fallback at {file_path}")
         return filename
 
-    def list_weather_files(self, limit: int = 50, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
+    def list_weather_files(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """
-        Lists stored weather files in AWS S3 or local directory with pagination support.
+        Lists stored weather files in AWS S3 or local directory with pagination and optional date period filtering.
         Returns Tuple: (paginated_files_list, total_file_count)
         """
         all_files = []
@@ -126,7 +142,6 @@ class StorageService:
 
         if self.s3_client:
             try:
-                # Efficient AWS S3 object listing
                 paginator = self.s3_client.get_paginator('list_objects_v2')
                 page_iterator = paginator.paginate(Bucket=self.bucket_name)
                 
@@ -139,25 +154,37 @@ class StorageService:
                                 "size": obj["Size"],
                                 "created_at": obj["LastModified"].isoformat(),
                             })
-                # Sort newest first
-                all_files.sort(key=lambda x: x["created_at"], reverse=True)
-                total = len(all_files)
-                paginated_files = all_files[offset : offset + limit]
-                return paginated_files, total
             except (BotoCoreError, ClientError) as e:
                 logger.error(f"S3 list objects error: {e}. Listing from local storage fallback.")
+                all_files = []
 
-        # Local fallback listing
-        for file_path in self.local_dir.glob("*.json"):
-            stat = file_path.stat()
-            created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
-            all_files.append({
-                "name": file_path.name,
-                "size": stat.st_size,
-                "created_at": created_at,
-            })
+        # Local fallback listing if S3 is inactive or empty fallback
+        if not self.s3_client:
+            for file_path in self.local_dir.glob("*.json"):
+                stat = file_path.stat()
+                created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+                all_files.append({
+                    "name": file_path.name,
+                    "size": stat.st_size,
+                    "created_at": created_at,
+                })
         
         all_files.sort(key=lambda x: x["created_at"], reverse=True)
+
+        # Apply specific date period filtering if requested
+        if start_date or end_date:
+            filtered = []
+            for item in all_files:
+                f_start, f_end = self._parse_dates_from_filename(item["name"])
+                if f_start and f_end:
+                    match_start = (not start_date) or (f_start >= start_date)
+                    match_end = (not end_date) or (f_end <= end_date)
+                    if match_start and match_end:
+                        filtered.append(item)
+                else:
+                    filtered.append(item)
+            all_files = filtered
+
         total = len(all_files)
         paginated_files = all_files[offset : offset + limit]
         return paginated_files, total

@@ -1,3 +1,5 @@
+from datetime import datetime
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
@@ -56,15 +58,49 @@ async def store_weather_data(payload: StoreWeatherDataRequest):
     "/list-weather-files",
     response_model=ListWeatherFilesResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": ErrorResponse, "description": "Validation Error"},
+    },
 )
 async def list_weather_files(
     limit: int = Query(default=50, ge=1, le=500, description="Maximum number of files to return"),
     offset: int = Query(default=0, ge=0, description="Offset index for pagination"),
+    start_date: Optional[str] = Query(default=None, description="Filter files starting on or after YYYY-MM-DD"),
+    end_date: Optional[str] = Query(default=None, description="Filter files ending on or before YYYY-MM-DD"),
 ):
     """
-    Lists stored weather JSON objects from the cloud object storage bucket with limit and offset pagination.
+    Lists stored weather JSON objects from the cloud object storage bucket with pagination and optional date period filtering.
     """
-    files_list, total_count = storage_service.list_weather_files(limit=limit, offset=offset)
+    # Validate date formats and ranges if provided
+    if start_date and end_date:
+        try:
+            s_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+            e_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"status": "error", "message": "Dates must be in valid YYYY-MM-DD format"},
+            )
+
+        if s_dt > e_dt:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"status": "error", "message": "start_date must be less than or equal to end_date"},
+            )
+
+        day_diff = (e_dt - s_dt).days + 1
+        if day_diff > 31:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"status": "error", "message": "Date period filter range cannot exceed 31 days"},
+            )
+
+    files_list, total_count = storage_service.list_weather_files(
+        limit=limit,
+        offset=offset,
+        start_date=start_date,
+        end_date=end_date,
+    )
     return ListWeatherFilesResponse(
         files=files_list,
         total=total_count,
