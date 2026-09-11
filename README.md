@@ -184,8 +184,4 @@ Service health check and live AWS S3 connectivity status.
 
 ---
 
-## 🤖 AI Tool Usage & Engineering Ownership Statement
 
-> *"As allowed by the case study guidelines, AI tools (such as Antigravity/ChatGPT/Claude) were utilized as pair-programming assistants during the development of this project. However, **all architectural design, cloud storage abstractions, input validation logic, data models, error handling strategies, and component hierarchies reflect my direct engineering decisions**.*
->
-> *I designed the system to be production-grade, modular, and resilient. Every line of code—from the `boto3` AWS S3 SDK integration with local filesystem fallback to the Pydantic v2 request validation schemas—was crafted under my direction and can be line-by-line defended by me in any technical review."*
